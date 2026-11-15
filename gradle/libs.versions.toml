@@ -10,6 +10,7 @@ appProjected = "1.4.0"
 appAutomotive = "1.7.0"
 app = "1.4.0"
 junit = "4.13.2"
+roboelectric = "4.17"
 bouncycastle = "1.79"
 concentus = "1.0.0"
 media3 = "1.11.1"
@@ -29,6 +30,7 @@ androidx-app-projected = { group = "androidx.car.app", name = "app-projected", v
 androidx-app-automotive = { group = "androidx.car.app", name = "app-automotive", version.ref = "appAutomotive" }
 androidx-app = { group = "androidx.car.app", name = "app", version.ref = "app" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+roboelectric = { group = "org.robolectric", name = "robolectric", version.ref = "roboelectric"}
 bouncycastle = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 concentus = { group = "com.plasmoverse", name = "concentus", version.ref = "concentus" }
 androidx-media3-container = { group = "androidx.media3", name = "media3-container", version.ref = "media3" }
