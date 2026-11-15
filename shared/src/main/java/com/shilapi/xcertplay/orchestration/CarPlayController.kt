@@ -1060,6 +1060,7 @@ class CarPlayController(
                 onStopped = { deactivateMediaRemote(channel) },
                 onIncoming = ::onIap2Incoming,
                 onProgress = ::debugLog,
+                isAirPlayConnected = { activeSession != null || wirelessActiveReported.get() },
             )
             if (isStaleWirelessRun(generation)) {
                 closeWirelessStack()

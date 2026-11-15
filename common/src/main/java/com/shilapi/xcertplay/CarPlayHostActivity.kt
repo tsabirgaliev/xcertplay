@@ -4484,7 +4484,8 @@ class CarPlayHostActivity : ComponentActivity() {
         const val RECONNECT_MAX_SHIFT = 4
         const val MAX_RECONNECT_ATTEMPTS = 3
         const val IAP_TUNNEL_RECONNECT_DELAY_MILLIS = 15_000L
-        const val CONTROLLER_CLOSE_TIMEOUT_MILLIS = 4_000L
+        // Includes the Wi-Fi P2P removal deadline and controller executor shutdown.
+        const val CONTROLLER_CLOSE_TIMEOUT_MILLIS = 8_000L
         const val AUDIO_CAPTURE_DIRECTORY = "audio-captures"
         const val THREE_FINGER_COUNT = 3
         const val THREE_FINGER_SWIPE_DISTANCE_DP = 72

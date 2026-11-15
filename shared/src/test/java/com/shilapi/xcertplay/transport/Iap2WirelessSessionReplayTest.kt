@@ -95,6 +95,23 @@ class Iap2WirelessSessionReplayTest {
         assertTrue(location.stopped)
     }
 
+    @Test(timeout = 15_000)
+    fun ignoredFirstStartRequestIsRetriedOnSameBluetoothSession() {
+        val replay = replay(
+            phoneLink = Iap2LinkConfig(maxOutgoing = 4),
+            phoneInitiates = true,
+            open = Iap2Session::openWireless,
+            locationProvider = null,
+            closeLocallyAfter = "iap2 rx=0xae01",
+            ignoreFirstStart = true,
+        )
+        assertEquals(2, replay.sent.count { it.messageId == 0x4301 })
+        assertEquals(2, replay.sent.count { it.messageId == 0x5703 })
+        assertTrue(replay.progress.any { "retry carplay-start-session attempt=1" in it })
+        assertTrue(replay.outcome.isSuccess)
+        assertEquals(listOf("ready", "stopped"), replay.lifecycle)
+    }
+
     private class Replay(
         val sent: List<Iap2Frame>,
         val forwarded: List<Iap2Frame>,
@@ -109,8 +126,10 @@ class Iap2WirelessSessionReplayTest {
         open: (BlockingDuplexByteStream, String, (String) -> Unit) -> Iap2Session,
         locationProvider: Iap2LocationProvider?,
         closeLocallyAfter: String?,
+        ignoreFirstStart: Boolean = false,
     ): Replay {
         var wifiConfigurations = 0
+        var startRequests = 0
         val phone = ScriptedIap2Phone(
             phoneLink,
             phoneInitiates,
@@ -137,7 +156,9 @@ class Iap2WirelessSessionReplayTest {
                         group(2) { u8(0, 1) }
                     })
                 }
-                0x4301 -> if (locationProvider == null) {
+                0x4301 -> if (ignoreFirstStart && ++startRequests == 1) {
+                    // Simulates a phone still finishing its previous session after rotation.
+                } else if (locationProvider == null) {
                     // Updates for the subscriptions, forwarded untouched to the controller.
                     send(frame(0x5001) { bytes(0, byteArrayOf(0, 5, 0, 0x1a, 0x81.toByte())) })
                     send(frame(0x4158) { u8(0, 3); string(4, "Carrier"); u8(5, 1) })
@@ -173,6 +194,7 @@ class Iap2WirelessSessionReplayTest {
                 onStopped = { lifecycle += "stopped" },
                 onIncoming = { frame -> forwarded += frame },
                 onProgress = { message -> progress += message },
+                isAirPlayConnected = if (ignoreFirstStart) ({ false }) else null,
             )
         }
         session.close()

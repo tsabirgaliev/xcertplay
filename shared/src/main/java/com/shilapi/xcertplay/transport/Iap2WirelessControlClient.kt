@@ -7,6 +7,8 @@ import com.shilapi.xcertplay.iap2.message.Iap2WirelessSessionParameters
 import com.shilapi.xcertplay.iap2.session.Iap2Session
 import com.shilapi.xcertplay.iap2.wire.Iap2Frame
 import com.shilapi.xcertplay.mfi.Iap2MfiAuthenticationClient
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 /**
  * The wireless LIVI control sequence after a CSM channel is ready:
@@ -30,6 +32,7 @@ class Iap2WirelessControlClient(
         onStopped: () -> Unit = {},
         onIncoming: (Iap2Frame) -> Unit = {},
         onProgress: (String) -> Unit = {},
+        isAirPlayConnected: (() -> Boolean)? = null,
     ): Iap2WirelessControlResult {
         require(identification.wireless != null) {
             "Wireless control requires an Iap2IdentificationConfig with wireless transport"
@@ -72,6 +75,7 @@ class Iap2WirelessControlClient(
         stage = Iap2WirelessControlStage.SUBSCRIBED
         onProgress("iap2 subscriptions sent")
 
+        val startRetry = WirelessCarPlayStartRetry()
         var forwardedFrames = 0
         var wifiConfigurationsSent = 0
         var carPlayStartSessionsSent = 0
@@ -96,6 +100,20 @@ class Iap2WirelessControlClient(
             onReady()
             // The control session is long-lived. Poll timeouts only wake this loop; they do not end it.
             while (true) {
+                if (isAirPlayConnected != null) {
+                    when (startRetry.poll(monotonicMillis(), isAirPlayConnected())) {
+                        WirelessCarPlayStartRetry.Action.RESEND -> {
+                            sendDuringControl(carPlayStartSession(endpoint))
+                            carPlayStartSessionsSent++
+                            onProgress("iap2 tx=0x4301 retry carplay-start-session " +
+                                "attempt=${startRetry.retries}; waiting for AirPlay connection")
+                        }
+                        WirelessCarPlayStartRetry.Action.EXPIRED -> throw IOException(
+                            "CarPlayStartSession timed out: iPhone did not open AirPlay after 30s and 3 retries",
+                        )
+                        WirelessCarPlayStartRetry.Action.NONE -> Unit
+                    }
+                }
                 vehicleReporter.tick(::sendDuringControl)
                 if (locationActive && sendLatestLocation(locationProvider, locationSubscription) && !locationSentLogged) {
                     locationSentLogged = true
@@ -109,7 +127,10 @@ class Iap2WirelessControlClient(
                 } else {
                     CONTROL_POLL_INTERVAL_MILLIS
                 }
-                val incoming = session.recv(vehicleReporter.pollTimeout(pollTimeout))
+                val recoveryPollTimeout = if (isAirPlayConnected != null && startRetry.pending) {
+                    minOf(pollTimeout, 1_000L)
+                } else pollTimeout
+                val incoming = session.recv(vehicleReporter.pollTimeout(recoveryPollTimeout))
                 if (incoming == null) {
                     if (session.isClosed) {
                         return Iap2WirelessControlResult(
@@ -170,6 +191,7 @@ class Iap2WirelessControlClient(
                         sendDuringControl(carPlayStartSession(endpoint))
                         stage = later(stage, Iap2WirelessControlStage.CARPLAY_START_SENT)
                         carPlayStartSessionsSent++
+                        startRetry.started(monotonicMillis())
                         onProgress("iap2 tx=0x4301 carplay-start-session")
                     }
 
@@ -250,6 +272,8 @@ class Iap2WirelessControlClient(
             onStopped()
         }
     }
+
+    private fun monotonicMillis(): Long = TimeUnit.NANOSECONDS.toMillis(System.nanoTime())
 
     private fun sendDuringBringUp(frame: Iap2Frame, deadlineNanos: Long) {
         session.send(frame, requireRemaining(deadlineNanos))
@@ -423,3 +447,31 @@ data class Iap2WirelessControlResult(
     val postTransportWiFiConfigurationsSent: Int,
     val wirelessCarPlayAvailableSeen: Boolean,
 )
+
+/** Bounds bootstrap recovery without interrupting the associated Wi-Fi group or an active session. */
+internal class WirelessCarPlayStartRetry {
+    enum class Action { NONE, RESEND, EXPIRED }
+    private var firstSentMillis: Long? = null
+    private var lastSentMillis: Long = 0
+    private var connected = false
+    var retries = 0
+        private set
+    val pending: Boolean get() = firstSentMillis != null && !connected
+
+    fun started(nowMillis: Long) {
+        if (firstSentMillis == null) firstSentMillis = nowMillis
+        lastSentMillis = nowMillis
+    }
+
+    fun poll(nowMillis: Long, airPlayConnected: Boolean): Action {
+        if (airPlayConnected) connected = true
+        if (!pending) return Action.NONE
+        if (nowMillis - firstSentMillis!! >= 30_000L) return Action.EXPIRED
+        if (retries < 3 && nowMillis - lastSentMillis >= 5_000L) {
+            retries++
+            lastSentMillis = nowMillis
+            return Action.RESEND
+        }
+        return Action.NONE
+    }
+}
